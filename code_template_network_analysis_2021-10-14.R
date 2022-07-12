@@ -90,7 +90,6 @@ dataset_net <- dataset %>%
 # common approach in psychological networks.
 # Because of this, I will assume the data is multivariate normally distributed
 # and the items are continuous.
-# However, you have to check these assumptions in your own dataset.
 
 
 
@@ -98,7 +97,7 @@ dataset_net <- dataset %>%
 
 # With no regularization ----
 
-# Estimate the network
+# Estimate the network using "pcor" method
 ggm_pcor <- bootnet::estimateNetwork(dataset_net,
                                      default = "pcor")
 
@@ -115,9 +114,9 @@ plot(ggm_pcor,
 
 # This is the most common method. We need to define how "good" or "bad"
 # we will be with the network edges by defining the EBIC tuning parameter
-# Usually, it is set to 0.5 (we are expecting few edges in the network).
+# Usually, it is set to 0.5 (i.e., we are expecting few edges in the network).
 # But, you could decrease it. Increase this value is not recommended.
-# If you put the tuning parameter to 0, you are askinf for BIC selection method
+# If you put the tuning parameter to 0, you are asking for BIC selection method.
 
 # Estimate the network
 ggm_ebicglasso <- bootnet::estimateNetwork(dataset_net,
@@ -220,7 +219,7 @@ ggplot2::ggsave(filename = "centrality-measures.png",
                 device = "png",
                 width = 16,
                 height = 12,
-                units = c("cm"))
+                units = "cm")
 
 
 

@@ -1,0 +1,736 @@
+---
+title: "Network analysis"
+output: html_document
+date: '2022-07-11'
+---
+
+## Packages
+
+The main packages to run network analysis are:
+
+- qgraph: function to plot network. Also is use to estimate networks and compute cetrality measures
+
+- bootnet: a wrapper around several packages and estimation methods, also computes accuracy and stability anaylses
+
+- igraph: well-known package to run graphs. Used to community analysis
+
+- mgm: used to run predictability analysis
+
+- NetworkComparisonTest: compare networks
+
+Useful packages to work with data:
+
+- tidyverse: set of packages to work with data and plots (tidyr, dplyr, stringr, ggplot2)
+
+- readxl: used to read Excel data
+
+- naniar: missing visualization
+
+```{r}
+# Install a package that has a function to install/load packages faster
+if (!require(xfun)) {install.packages("xfun")}; library(xfun)
+
+# Use xfun to install/load packages at once
+xfun::pkg_attach2(
+  c(
+    "tidyverse",
+    "readxl",
+    "bootnet",
+    "qgraph",
+    "igraph",
+    "NetworkComparisonTest"
+  )
+)
+
+```
+
+## Load and tidy the dataset
+
+We will work with a small portion of the Brazilian National Health Survey, 2013. This sample has 1000 observations and 10 variables, representing the 9 depressive symptoms measured by the PHQ-9 questionnaire and one demographic variable (i.e., sex).
+
+Depressive symptoms:
+
+- Insomnia or hypersomnia (N010)
+
+- Fatigue (N011)
+
+- Loss of interest/pleasure (N012)
+
+- Decreased concentration (N013)
+
+- Weight loss or gain (N014)
+
+- Psychomotor agitation or retardation (N015)
+
+- Depressed mood (N016)
+
+- Feeling worthless (N017)
+
+- Thoughts of death/suicide (N018)
+
+Let's load this dataset (xlsx file) with the function `read_excel` from readxl package.
+
+```{r}
+dataset <- readxl::read_excel(path = "PNS_depression_2021-10-14.xlsx")
+View(dataset)
+```
+
+Change the names of the variables.
+
+```{r}
+dataset <- dataset %>%
+  dplyr::rename(sex = C006,
+                sleep = N010,
+                fatigue = N011,
+                loss_pleasure = N012, 
+                concentration = N013,
+                weight = N014,
+                psychomotor = N015, 
+                depressed_mood = N016,
+                worthless = N017,
+                suicidal_thoughts = N018)
+```
+
+We are assuming that depressive symptoms are continuous variables. Since it is not the focus of this workshop, we will not explore the dataset nor run descriptive statistics.
+
+
+
+## Network analysis
+
+To run almost all the existent network models, we can use only one function, estimateNetwork, from bootnet package. This function is a wrapper around several estimation methods. Basically, when we call it with a specific method, it calls the function from the package that runs this method.
+
+The first argument of this function is the dataset.
+
+For instance, if we want to run a partial correlation network (GGM), we can use the argument default = "pcor" and it calls the qgraph function that estimates a partial correlation network with Pearson correlation. Check ?estimateNetwork to see all the available methods.
+
+### Partial correlation network
+
+Let's start with a partial correlation network with Pearson correlation. To do so, we can use the estimateNetwork argument `default = "pcor"`.
+
+Before doing it, remove the categorical variable `sex` from the dataset.
+
+```{r}
+# Remove the variable sex
+dataset_net <- dataset %>%
+  dplyr::select(-sex)
+
+# Estimate the partial correlation network
+network_pcor <-
+  estimateNetwork(
+    data = dataset_net,
+    default = "pcor"
+  )
+```
+
+Let's see what is inside the object `network_pcor`. Use `$` to explore.
+
+```{r}
+network_pcor$graph # the adjacency matrix (correlation matrix with 0 in the diagonal). This will be used to plot the network
+network_pcor$results # identical to $graph
+network_pcor$labels # variable names
+```
+
+
+To plot the network, we can use the R base `plot` function. Actually, this is a modified plot function which calls `qgraph` function (from qgraph package) to build the plot.
+
+```{r}
+plot(network_pcor,
+     layout = "spring") # an algorithm for node placement
+```
+
+There are several arguments to be used in qgraph. One of them is the `layout`. It's used to position the nodes in the network. Options:
+
+- circle: places nodes in a circle
+
+- spring: uses Fruchterman-Reingold algorithm to place the most connected nodes closer to each other. Recommended.
+
+We also can look at the local properties of the network. To do so, we can use the print function.
+
+```{r}
+print(network_pcor)
+```
+
+We can remember that the density of a network is the number of estimated edges divided by the number of possible edges. In this example, the network is a dense, fully connected network (36 of 36 edges were estimated).
+
+#### Partial correlation network - polychoric correlation
+
+If our variables are ordinal, we can run polychoric correlations between the itens and estimate a network based on this type of correlation.
+
+To do it, we will use the argument `corMethod = "cor_auto"`. This method computes correlation coefficients based on the type of the variable. Since our variables can be considered as ordinal (i.e., scores range 0-3), the method will estimate polychoric correlation. Check more about this method in ?cor_auto.
+
+```{r}
+network_pcor_poly <-
+  estimateNetwork(
+    data = dataset_net,
+    default = "pcor",
+    corMethod = "cor_auto"
+  )
+
+plot(network_pcor_poly)
+```
+
+Use `print()` to see other information about the network.
+
+```{r}
+print(network_pcor_poly)
+```
+
+To compare this network with the first one, we can use the function `par(mfrow = c(1, 2))` to show networks side by side.
+
+```{r}
+par(mfrow = c(1, 2)) # it divides the plot slate into two parts (1 row and 2 columns) and plot each network in one part
+plot(network_pcor)
+plot(network_pcor_poly)
+```
+
+### Partial correlation unetwork using pruning 
+
+We can remove edges from the network based on some method (significance, false discovery rate).
+
+Use `threshold = "sig"` to remove edges from the network based on significance level (without multiple tests correction). Change the significance level with the argument `alpha`.
+
+```{r}
+network_pcor_sig <-
+  estimateNetwork(
+    data = dataset_net,
+    default = "pcor",
+    threshold = "sig",
+    alpha = 0.05
+  )
+plot(network_pcor_sig)
+```
+
+
+```{r}
+print(network_pcor_sig)
+```
+
+
+### LASSO network
+
+This is the most common method in psychological networks. We do it because we want to remove spurious edges from the network. It runs a partial correlation network with regularization (penalization). LASSO (Least Absolute Shrinkage and Selection Operator) shrinks the edge weights toward zero and small enough edges become exactly zero. It tends to "clean" the network, resulting in a sparse model.
+
+LASSO has a tuning parameter called lambda ($\lambda$) that controls how clean the network will be. If this tuning parameter is low, the network will keep several spurious edges. On the other hand, high lambdas remove too many edges, including the important ones.
+
+We never pick a lambda value by ourselves. Usually, LASSO estimates several networks, from a blank network to a fully connected one. Then, we should select the best network based on an information criterion.
+
+We can use EBIC (Extended Bayesian Information Criterion) to pick the best network. In turn, EBIC has a hyperparameter called gamma ($\gamma$) that controls its preference for models with fewer edges. This is what we set manually. Usually we use values from 0 to 0.5. Higher values (e.g., 0.5) indicate that we want a network with fewer edges (more parcimonious model). So we want to see only the most relevant edges. However, it can exclude important edges too, since we are being too rigorous.
+
+Setting EBIC hyperparameter to 0 implies that we don't worry too much about spurious edges and we will probably get a denser network. 
+
+Let's plot two networks, one with EBIC = 0.5 and the other with EBIC = 0. To run a LASSO network, we will use `default = "EBICglasso"` and add the `tuning` argument, which is the EBIC hyperparameter.
+
+```{r}
+# EBIC = 0.5
+network_lasso_05 <-
+  estimateNetwork(
+    data = dataset_net,
+    default = "EBICglasso",
+    tuning = 0.5
+  )
+plot(network_lasso_05,
+     layout = "spring")
+
+# EBIC = 0
+network_lasso_0 <-
+  estimateNetwork(
+    data = dataset_net,
+    default = "EBICglasso",
+    tuning = 0
+  )
+plot(network_lasso_0,
+     layout = "spring")
+```
+
+```{r}
+print(network_lasso_05)
+print(network_lasso_0)
+```
+
+
+### Predictability
+
+It measures the amount of variation in a node that is predicted by its neighbors. It's not always you will use it, but it can be useful because:
+
+1. "Predictability allows to judge the relevance of edges connected to a symptom; if symptom A is determined to 90% by its neighbors, its edges will be practically more relevant than if only 3% is determined by its neighbors. This is especially interesting in clinical practice, where one has to judge whether an intervention on a symptom via the symptom network is feasible."
+
+"The predictability of all nodes taken together gives an indication of how self-determined (a part of) the network is: if the overall predictability is high, the symptom network is largely self-determined, and if the overall predictability is low, the symptom network is largely determined by other variables that are not included in the analysis."
+
+Reference: https://psych-networks.com/two-new-papers-determine-predictability-symptom-networks/
+
+
+To compute the node predictability, we should estimate the network using another method, called `mgm`. It's also implemented in the estimateNetwork function. However, we have to specify new arguments to run this method. See ?estimateNetwork and ?mgm to get more information.
+
+1. `type`: the type of each variable we have in our dataset. Options are "g" (gaussian, continuous), "p" (poisson), and "c" (categorical). Since all the variables are continuous, we will use "g".
+
+```{r}
+type <- rep("g", ncol(dataset_net)) # repeat "g" for the number of columns in the data
+```
+
+
+2. `level`: how many categories does each variable have? Also here we need to specify a number for each variable. Use 1 for continuous variables.
+
+```{r}
+level <- rep(1, ncol(dataset_net)) # repeat 1 for the number of columns in the data
+```
+
+Now insert these two objects in the estimateNetwork function. Also specifies tuning, criterion, and rule arguments.
+
+```{r}
+network_predict <-
+  estimateNetwork(
+    data = dataset_net,
+    default = "mgm", # here is the mgm
+    type = type,
+    level = level,
+    tuning = 0.5,
+    criterion = "EBIC", # it says we want EBIC to select the best model
+    rule = "AND" # this means that we will only keep an edge if both regression coefficients are nonzero
+  )
+```
+
+With the estimated network, now we will use the `predict` function (see ?predict.mgm). When this function receives a mgm object, it will compute a list with some objects inside. We will look for the `errors` dataframe, which stores the node predictability.
+
+There are two types of predictability:
+
+1. errorCon: For continuous variables. R2, the R-squared or the proportion of explained variance, and RMSE, the Root Mean Squared Error). Usually, people use R2.
+
+2. errorCat: for categorical variables. "CC", the proportion of correct classification (accuracy), "nCC", the proportion of correct classification normalized by the marginal distribution of the variable, and "CCmarg", the accuracy of the intercept/marginal model. Usually "CC" is used.
+
+#### Compute predictability for continuous variables
+
+```{r}
+predictability <- 
+  predict(
+    network_predict$results,
+    data = dataset_net,
+    errorCon = c("R2", "RMSE")
+  )
+
+# get the predictability dataframe
+errors_dataframe <- predictability$errors
+
+# get the R2 (a vector with R2 for each variable)
+errors_R2 <- errors_dataframe$R2
+errors_R2
+```
+
+#### Compute predictability for categorical variables
+
+```{r}
+# Estimate an example mgm network with categorical data
+type_cat <- rep("c", ncol(dataset_net))
+level_cat <- rep(4, ncol(dataset_net)) # 4 categories
+
+network_predict_cat <-
+  estimateNetwork(
+    data = dataset_net,
+    default = "mgm",
+    type = type_cat,
+    level = level_cat,
+    tuning = 0.5,
+    criterion = "EBIC",
+    rule = "AND"
+  )
+
+predictability <- 
+  predict(
+    network_predict_cat$results,
+    data = dataset_net,
+    errorCat = c("CC", "nCC", "CCmarg")
+  )
+
+# get the predictability dataframe
+errors_dataframe <- predictability$errors
+
+# get the CC (a vector with CC for each variable)
+errors_CC <- errors_dataframe$CC
+errors_CC
+```
+
+
+#### Compute predictability for mixed data
+
+```{r}
+# Estimate an example mgm network with mixed data
+type_mix <- c(rep("c", 5),
+              rep("g", 4))
+level_mix <- c(rep(4, 5),
+               rep(1, 4))
+
+network_predict_mix <-
+  estimateNetwork(
+    data = dataset_net,
+    default = "mgm",
+    type = type_mix,
+    level = level_mix,
+    tuning = 0.5,
+    criterion = "EBIC",
+    rule = "AND"
+  )
+
+predictability <- 
+  predict(
+    network_predict_mix$results,
+    data = dataset_net,
+    errorCon = "R2",
+    errorCat = "CC"
+  )
+
+# get the predictability dataframe
+errors_dataframe <- predictability$errors
+errors_dataframe
+
+# get the CC (rows 1 to 5) and R2 (rows 6 to 9) 
+errors_mix <- c(errors_dataframe$CC[1:5],
+                errors_dataframe$R2[6:9])
+errors_mix
+```
+
+
+To show the predictability values in the network, we will use the qgraph argument `pie`. This argument creates a donut plot around the node, with colored areas showing the predictability.
+
+Other style arguments can be used, like `pieBorder` (changes the size of the pie chart in the border) and `pieColor` (color of the pie chart). See ?qgraph for more arguments and information.
+
+```{r}
+plot(
+  network_lasso_05,
+  layout = "spring",
+  pie = errors_R2,
+  pieBorder = 0.2
+)
+```
+
+### Community analysis
+
+Community analysis identify clusters of nodes in the network. It's a data-driven approach to detect nodes that are well connected with each other. Nodes withing a community will share more connections with their "communitymates" than with other nodes (Density Hypothesis)
+
+There are several algorithms to run community analysis but there is no consensus on which one is the best (https://psych-networks.com/r-tutorial-identify-communities-items-networks/).
+
+Let's see one of these algorithms: the *walktrap*. "Starting in a given node, the algorithm repeatedly moves along the edges connecting that node to its neighbors. A probability function determines where it is more likely to “walk” to a node with a higher degree than a node with a lesser degree. In this way, the process will get “trapped” within a community because it is less probable for it to move to a node that does not belong in that community." (https://psyarxiv.com/9pj2m/).
+
+To run the walktrap algorithm, we will use the function `cluster_walktrap`, from igraph package. However, we have to do some steps before running the function.
+
+```{r}
+# Create a qgraph object
+qgraph_net <- 
+  qgraph::qgraph(
+    network_lasso_05$graph,
+    DoNotPlot = TRUE
+  )
+
+# Transform the qgraph object into a igraph object
+igraph_net <- igraph::as.igraph(qgraph_net)
+
+# Run walktrap algorithm
+walktrap_res <-
+  igraph::cluster_walktrap(graph = igraph_net)
+
+# Get communities (it's a vector with values indicating the community membership of each node)
+communities <- walktrap_res$membership
+communities
+
+```
+
+In the network, we will use communities to color the nodes. But qgraph function asks for a list of communities with a specific structure.
+
+Since we have two communities, we need to create a list with two vectors inside, one for each community. Also we need to find in which community each node is.
+
+```{r}
+communities_net <-
+  list(
+    "Community 1" = which(communities == 1), # return the position of the 1's
+    "Community 2" = which(communities == 2) # return the position of the 2's
+  )
+communities_net
+```
+
+
+### Colors for communities
+
+With our communities in hand, we can pick colors to visualize them. To do so, let's create a vector with two colors, one for each community.
+
+```{r}
+color_net <- c("#E69F00", # orange
+               "#56B4E9") # skyblue
+```
+
+### Variable names
+
+`qgraph` allow us to a legend for our network. We can give names for our variables by creating a vector with names. Remember to follow the sequence of the variables in the dataset.
+
+```{r}
+names(dataset_net) # get the sequence of the variables
+
+var_names <-
+  c("Insomnia or hypersomnia",
+    "Fatigue",
+    "Loss of interest/pleasure",
+    "Decreased concentration",
+    "Weight loss or gain",
+    "Psychomotor agitation or retardation",
+    "Depressed mood",
+    "Feeling worthless",
+    "Thoughts of death/suicide")
+```
+
+
+### Building a good-looking network
+
+Let's gather all we have learned so far with new arguments to build a good network. You can play with the arguments or even add more if you want. Go to the help page ?qgraph.
+
+```{r}
+# Get the maximum edge weight in the network
+max_edge <-
+  max(network_lasso_05$graph)
+network_lasso_05_plot <- 
+  plot(
+    network_lasso_05,
+    layout = "spring", # add node placement algorithm
+    maximum = max_edge, # the thickest edge will be this value
+    pie = errors_R2, # add R2 in the node border
+    pieBorder = 0.2, # change the size of the pie
+    vsize = 7, # resize the nodes
+    label = seq_len(ncol(dataset_net)), # display numbers inside the nodes
+    label.cex = 1.5, # resize node labels
+    nodeNames = var_names, # create a legend with informative names
+    groups = communities_net, # color nodes based on communities
+    color = color_net, # change the color of the communities
+    border.color = "black",
+    label.color = "black",
+    theme = "Borkulo", # nice edge colors
+    legend = TRUE, # activate legend (legend is activated by default)
+    legend.cex = 0.75, # legend size
+    title = "Network of depressive symptoms", # title
+    title.cex = 1.5 # title size
+  )
+```
+
+### How to save a network
+
+We can save the network using arguments inside the `qgraph` (or `plot`) function or using R native functions.
+
+#### `Plot` function
+
+We will use the arguments `GLratio`, `height`, `width`, `filetype`, and `filename`.
+
+Instead of usign `plot`, we will update the `network_lasso_05_plot` using `qgraph` function.
+
+```{r}
+# pdf
+qgraph(
+  network_lasso_05_plot,
+  GLratio = 1.8, # increase space between the network and legend
+  height = 7,
+  width = 7 * 1.4,
+  filetype = "pdf",
+  filename = "lasso-network"
+)
+
+# png
+qgraph(
+  network_lasso_05_plot,
+  GLratio = 1.8, # increase space between the network and legend
+  height = 7,
+  width = 7 * 1.4,
+  filetype = "png",
+  filename = "lasso-network"
+)
+  
+```
+
+
+#### R native functions
+
+We can use `pdf` and `png` functions.
+
+```{r}
+# pdf (height and width in inches)
+pdf(file = "lasso-network-R.pdf",
+    height = 7,
+    width = 7 * 1.4) # this function opens a blank pdf file
+
+qgraph(
+  network_lasso_05_plot,
+  GLratio = 1.2, # increase space between the network and legend
+  legend.cex = 0.6,
+  mar = c(3, 3, 3, 1) # change the margins. c(bottom, left, top, right) 
+)
+
+dev.off() # this function closes the pdf file
+```
+
+```{r}
+# png (height and widh in px)
+png(file = "lasso-network-R.png",
+    height = 800,
+    width = 1200) # this function opens a blank pdf file
+
+qgraph(
+  network_lasso_05_plot,
+  GLratio = 1.2, # increase space between the network and legend
+  legend.cex = 0.6,
+  mar = c(3, 3, 3, 1) # change the margins. c(bottom, left, top, right) 
+)
+
+dev.off()
+```
+
+```{r}
+# Package to save svg files
+xfun::pkg_attach2("svglite")
+
+# svglite (height and width in inches)
+
+svglite(file = "lasso-network-R.svg",
+        height = 7,
+        width = 7 * 1.4)
+
+qgraph(
+  network_lasso_05_plot,
+  GLratio = 1.2, # increase space between the network and legend
+  legend.cex = 0.6,
+  mar = c(3, 3, 3, 1) # change the margins. c(bottom, left, top, right) 
+)
+
+dev.off()
+```
+
+
+SVG files can be modified using softwares like Inkspace, Adobe Illustrator, or Figma.
+
+
+
+
+## Centrality measures
+
+Centrality measures basically show how important a node is for the network. There are several centrality measures, but we will only look at 4: strength, expected influence, betweenness, and closeness.
+
+- Strength: sums the absolute values of the edges of each node.
+
+- Expected influence: sums the values of the edges of each node, considering the sign (positive or negative).
+
+- Betweenness: measures how often a node is on the shortest path between two nodes.
+
+- Closeness: quantifies the distance between the node and all other nodes in the network.
+
+To run and plot these measures, we can use the `centralityPlot` function, from qgraph package. This function creates a `ggplot` object. We can edit this usign ggplot functions and syntax.
+
+```{r}
+centrality_net <- 
+  qgraph::centralityPlot(
+    network_lasso_05,
+    labels = var_names,
+    scale = "raw", # get the raw values for centrality measures
+    include = c(
+      "Strength",
+      "ExpectedInfluence",
+      "Betweenness",
+      "Closeness"
+    )
+  )
+
+```
+To save this plot, we can use `ggsave` function from ggplot2 package.
+
+```{r}
+ggsave(
+  filename = "centrality-plot.png",
+  plot = centrality_net,
+  device = "png",
+  width = 7,
+  height = 7,
+  units = "in",
+  dpi = 72
+)
+```
+
+
+
+## Edge accuracy
+
+Edge accuracy computes 95% bootstrapped confidence intervals (quantiles). It should always be performed.
+
+Interpretation: in 95 % of the cases such a CI will contain the true value of the parameter.
+
+The edge-weight bootstrapped CIs should not be interpreted as significance tests to zero, but only to show the accuracy of edge-weight estimates and to compare edges to one-another.
+
+To run this analysis, we will use the function `bootnet` from bootnet package. We have to determine:
+
+- nBoots: how many resamples we want. Higher values produce narrower intervals.
+
+- type: the type of bootstrap we are going to run. In this case, "nonparametric".
+
+- statistics: the statistics that will be estimated. We will use "edge", "strength", "expectedInfluence", "closeness", and "betweenness".
+
+```{r}
+edge_acc <- 
+  bootnet::bootnet(
+    network_lasso_05,
+    nBoots = 1000,
+    type = "nonparametric",
+    nCores = 4, # determine computer cores to speed up analysis
+    statistics = c("edge",
+                   "strength",
+                   "expectedInfluence",
+                   "closeness",
+                   "betweenness")
+  )
+
+```
+
+
+To visualize the results, we can use the `plot` function.
+
+```{r}
+plot(edge_acc,
+     labels = TRUE, # if labels should be displayed
+     order = "sample") # order nodes based on the average bootstrapped value
+```
+
+## Centrality stability
+
+Investigates the stability by looking if the order of centrality indices remains the same after re-estimating the network with less observations or variables (it’s recommended to only drop observations).
+
+Case-dropping subset bootstrap: drop proportions of cases and assess the correlation between the original centrality indices and those obtained from subsets (correlation stability coefficient).
+
+To run this analysis, we will use the function `bootnet` from bootnet package. We have to determine:
+
+- nBoots: how many resamples we want. Higher values produce narrower intervals.
+
+- type: the type of bootstrap we are going to run. In this case, "case".
+
+- statistics: the statistics that will be estimated. We will use "strength", "expectedInfluence", "closeness", and "betweenness".
+
+```{r}
+centrality_stab <- 
+  bootnet::bootnet(
+    network_lasso_05,
+    nBoots = 1000,
+    type = "case",
+    nCores = 4, # determine computer cores to speed up analysis
+    statistics = c("strength",
+                   "expectedInfluence",
+                   "closeness",
+                   "betweenness")
+  )
+
+```
+
+To visualize the results, we can use the `plot` function.
+
+```{r}
+plot(centrality_stab,
+     statistics = c("strength",
+                    "expectedInfluence",
+                    "closeness",
+                    "betweenness")
+) 
+```
+
+
+```{r}
+corStability(centrality_stab)
+```
+
+
